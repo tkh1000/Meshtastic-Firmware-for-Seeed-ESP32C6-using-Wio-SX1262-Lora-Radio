@@ -186,28 +186,25 @@ jobs:
         if: success()
         run: |
           mkdir -p package
-          # Create manifest.json file
-          python3 << 'PYTHON_SCRIPT'
-import json
-manifest = {
-    "name": "Meshtastic",
-    "version": "2.7.15",
-    "new_install_prompt_erase": True,
-    "builds": [{
-        "chipFamily": "ESP32-C6",
-        "parts": [
-            {"path": "bootloader.bin", "offset": 0},
-            {"path": "partitions.bin", "offset": 32768},
-            {"path": "firmware.bin", "offset": 65536}
-        ]
-    }]
-}
-with open('package/manifest.json', 'w') as f:
-    json.dump(manifest, f, indent=2)
-print("✓ manifest.json created")
-PYTHON_SCRIPT
-          
-          echo "Manifest contents:"
+          python3 > /dev/null << 'EOF'
+          import json
+          manifest = {
+              "name": "Meshtastic",
+              "version": "2.7.15",
+              "new_install_prompt_erase": true,
+              "builds": [{
+                  "chipFamily": "ESP32-C6",
+                  "parts": [
+                      {"path": "bootloader.bin", "offset": 0},
+                      {"path": "partitions.bin", "offset": 32768},
+                      {"path": "firmware.bin", "offset": 65536}
+                  ]
+              }]
+          }
+          with open('package/manifest.json', 'w') as f:
+              json.dump(manifest, f, indent=2)
+          EOF
+          echo "✓ manifest.json created"
           cat package/manifest.json
 
       - name: Zip package
