@@ -1,0 +1,356 @@
+name: Build Seeed XIAO ESP32-C6 Wio-SX1262 Firmware
+
+# Trigger conditions for this workflow
+on:
+  # Manual trigger from GitHub Actions tab
+  workflow_dispatch:
+
+  # Automatically on push to main/master
+  push:
+    branches:
+      - master
+      - main
+      - develop
+    paths:
+      - 'variants/esp32c6/seeed_xiao_wio_sx1262/**'
+      - 'platformio.ini'
+      - '.github/workflows/build-seeed-xiao-c6.yml'
+      - 'src/**'
+
+  # Automatically on pull requests
+  pull_request:
+    branches:
+      - master
+      - main
+    paths:
+      - 'variants/esp32c6/seeed_xiao_wio_sx1262/**'
+      - 'platformio.ini'
+      - '.github/workflows/build-seeed-xiao-c6.yml'
+
+env:
+  REGISTRY: ghcr.io
+  VARIANT_NAME: seeed_xiao_wio_sx1262
+  ENVIRONMENT: seeed_xiao_wio_sx1262
+
+jobs:
+  # ============================================
+  # VERSION GENERATION
+  # ============================================
+  version:
+    name: Get Version String
+    runs-on: ubuntu-latest
+    outputs:
+      long: ${{ steps.version.outputs.long }}
+      short: ${{ steps.version.outputs.short }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate Version
+        id: version
+        run: |
+          if [ -f ./bin/buildinfo.py ]; then
+            echo "long=$(./bin/buildinfo.py long)" >> $GITHUB_OUTPUT
+            echo "short=$(./bin/buildinfo.py short)" >> $GITHUB_OUTPUT
+          else
+            # Fallback if buildinfo.py not available
+            GIT_HASH=$(git rev-parse --short HEAD)
+            GIT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+            BUILD_DATE=$(date +%Y%m%d_%H%M%S)
+            echo "long=${GIT_BRANCH}_${GIT_HASH}_${BUILD_DATE}" >> $GITHUB_OUTPUT
+            echo "short=${GIT_HASH}" >> $GITHUB_OUTPUT
+          fi
+
+  # ============================================
+  # BUILD FIRMWARE
+  # ============================================
+  build:
+    name: Build Firmware - Seeed XIAO ESP32-C6
+    needs: version
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {
+              pio_platform: "esp32",
+              pio_env: "${{ env.VARIANT_NAME }}",
+              arch: "esp32c6",
+              target: "firmware-esp32c6-seeed-xiao-wio-sx1262",
+            }
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Cache pip
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v3
+        with:
+          path: ~/.platformio
+          key: ${{ runner.os }}-platformio-${{ hashFiles('**/platformio.ini') }}
+          restore-keys: |
+            ${{ runner.os }}-platformio-
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install PlatformIO Core
+        run: |
+          pip install --upgrade pip
+          pip install platformio
+
+      - name: Verify PlatformIO Environment
+        run: |
+          pio --version
+          pio platform list
+          pio boards | grep -i esp32c6
+
+      - name: Check Variant Configuration
+        run: |
+          echo "Checking variant: ${{ env.VARIANT_NAME }}"
+          if [ -f "variants/esp32c6/${{ env.VARIANT_NAME }}/variant.h" ]; then
+            echo "✓ variant.h found"
+            head -20 "variants/esp32c6/${{ env.VARIANT_NAME }}/variant.h"
+          else
+            echo "✗ variant.h NOT found"
+            ls -la variants/esp32c6/
+            exit 1
+          fi
+          
+          if [ -f "variants/esp32c6/${{ env.VARIANT_NAME }}/platformio.ini" ]; then
+            echo "✓ platformio.ini found"
+            head -20 "variants/esp32c6/${{ env.VARIANT_NAME }}/platformio.ini"
+          else
+            echo "✗ platformio.ini NOT found"
+            exit 1
+          fi
+
+      - name: Build Firmware
+        id: build
+        run: |
+          echo "Building: ${{ matrix.pio_env }}"
+          pio run -e ${{ matrix.pio_env }} --verbose
+          
+          if [ $? -eq 0 ]; then
+            echo "Build Status: SUCCESS ✓"
+            echo "build_status=success" >> $GITHUB_OUTPUT
+          else
+            echo "Build Status: FAILED ✗"
+            echo "build_status=failed" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+      - name: Collect Build Artifacts
+        if: always()
+        run: |
+          mkdir -p build-artifacts
+          
+          # Copy firmware binary
+          if [ -f ".pio/build/${{ env.VARIANT_NAME }}/firmware.bin" ]; then
+            cp ".pio/build/${{ env.VARIANT_NAME }}/firmware.bin" \
+               "build-artifacts/${{ matrix.target }}-${{ needs.version.outputs.long }}.bin"
+            echo "✓ firmware.bin copied"
+          fi
+          
+          # Copy ELF file (useful for debugging)
+          if [ -f ".pio/build/${{ env.VARIANT_NAME }}/firmware.elf" ]; then
+            cp ".pio/build/${{ env.VARIANT_NAME }}/firmware.elf" \
+               "build-artifacts/${{ matrix.target }}-${{ needs.version.outputs.long }}.elf"
+            echo "✓ firmware.elf copied"
+          fi
+          
+          # Copy bootloader (if available)
+          if [ -f ".pio/build/${{ env.VARIANT_NAME }}/bootloader.bin" ]; then
+            cp ".pio/build/${{ env.VARIANT_NAME }}/bootloader.bin" \
+               "build-artifacts/bootloader-${{ needs.version.outputs.long }}.bin"
+            echo "✓ bootloader.bin copied"
+          fi
+          
+          ls -la build-artifacts/
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: firmware-${{ matrix.arch }}-${{ needs.version.outputs.short }}
+          path: build-artifacts/
+          retention-days: 90
+          overwrite: true
+
+      - name: Upload ELF for Debugging (Separate)
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: debug-elfs-${{ matrix.arch }}-${{ needs.version.outputs.short }}
+          path: |
+            build-artifacts/*.elf
+          retention-days: 30
+          overwrite: true
+
+      - name: Create Release Summary
+        if: always()
+        run: |
+          cat > build-summary.txt << 'EOF'
+          ========================================
+          Build Summary: Seeed XIAO ESP32-C6
+          ========================================
+          
+          Variant: ${{ env.VARIANT_NAME }}
+          Platform: ESP32-C6
+          Module: Wio-SX1262 LoRa
+          
+          Build Status: ${{ steps.build.outputs.build_status }}
+          Version: ${{ needs.version.outputs.long }}
+          Build Date: $(date)
+          
+          Firmware File: firmware-esp32c6-seeed-xiao-wio-sx1262-${{ needs.version.outputs.long }}.bin
+          
+          ========================================
+          Build Information
+          ========================================
+          Repository: ${{ github.repository }}
+          Ref: ${{ github.ref }}
+          SHA: ${{ github.sha }}
+          Actor: ${{ github.actor }}
+          
+          ========================================
+          Hardware Configuration
+          ========================================
+          MCU: Seeed XIAO ESP32-C6
+          - Dual 160MHz RISC-V cores
+          - 512KB SRAM, 4MB Flash
+          - WiFi 6, Bluetooth 5.3
+          
+          LoRa Module: Wio-SX1262
+          - SX1262 chip (SPI)
+          - 868-960 MHz
+          - 2-5km range
+          
+          ========================================
+          Pin Configuration
+          ========================================
+          SPI Interface:
+          - SCK: GPIO8 (D8)
+          - MOSI: GPIO10 (D10)
+          - MISO: GPIO9 (D9)
+          - CS: GPIO3 (D3)
+          
+          Control Pins:
+          - RESET: GPIO4 (D4)
+          - DIO1: GPIO5 (D5)
+          - BUSY: GPIO6 (D6)
+          
+          ========================================
+          Flashing Instructions
+          ========================================
+          1. Download the firmware binary from artifacts
+          2. Connect XIAO ESP32-C6 via USB-C
+          3. Flash using esptool.py:
+             esptool.py --chip esp32c6 --port /dev/ttyUSB0 \
+               write_flash -z 0x0 firmware-esp32c6-seeed-xiao-wio-sx1262-*.bin
+          4. Monitor serial output: picocom -b 115200 /dev/ttyUSB0
+          
+          ========================================
+          Meshtastic Build System
+          ========================================
+          Framework: PlatformIO
+          Build System: Meshtastic Firmware v2.7.x
+          CI Platform: GitHub Actions
+          
+          EOF
+          
+          cat build-summary.txt
+
+      - name: Upload Build Summary
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: build-summary-${{ needs.version.outputs.short }}
+          path: build-summary.txt
+          retention-days: 90
+
+  # ============================================
+  # VERIFICATION (Optional)
+  # ============================================
+  verify:
+    name: Verify Build Artifacts
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    if: success()
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: firmware-esp32c6-${{ needs.version.outputs.short }}
+
+      - name: Verify Artifacts
+        run: |
+          echo "Downloaded artifacts:"
+          ls -lh *.bin *.elf 2>/dev/null || echo "No binaries found"
+          
+          # Verify firmware.bin exists and has reasonable size
+          if [ -f "firmware-esp32c6-seeed-xiao-wio-sx1262-"*.bin ]; then
+            SIZE=$(stat -f%z "firmware-esp32c6-seeed-xiao-wio-sx1262-"*.bin 2>/dev/null || stat -c%s "firmware-esp32c6-seeed-xiao-wio-sx1262-"*.bin)
+            echo "Firmware size: $SIZE bytes"
+            
+            if [ "$SIZE" -gt 100000 ] && [ "$SIZE" -lt 5000000 ]; then
+              echo "✓ Firmware size looks reasonable (100KB - 5MB)"
+            else
+              echo "✗ WARNING: Firmware size seems suspicious"
+            fi
+          fi
+
+  # ============================================
+  # STATUS CHECK
+  # ============================================
+  status:
+    name: Build Status Report
+    runs-on: ubuntu-latest
+    needs: [build, verify]
+    if: always()
+    steps:
+      - name: Build Success
+        if: success()
+        run: |
+          echo "✓ Build SUCCESSFUL"
+          echo "✓ Seeed XIAO ESP32-C6 + Wio-SX1262 firmware compiled"
+          echo "✓ Download artifacts from GitHub Actions"
+
+      - name: Build Failed
+        if: failure()
+        run: |
+          echo "✗ Build FAILED"
+          echo "Check logs above for errors"
+          exit 1
+
+# ============================================================================
+# SETUP INSTRUCTIONS
+# ============================================================================
+#
+# To use this workflow:
+#
+# 1. Save this file as: .github/workflows/build-seeed-xiao-c6.yml
+#
+# 2. In your fork of Meshtastic firmware, create:
+#    - variants/esp32c6/seeed_xiao_wio_sx1262/variant.h
+#    - variants/esp32c6/seeed_xiao_wio_sx1262/platformio.ini
+#
+# 3. Push to GitHub - workflow will automatically trigger
+#
+# 4. View build status:
+#    - Go to Actions tab
+#    - Click "Build Seeed XIAO ESP32-C6 Wio-SX1262 Firmware"
+#    - Download artifacts when complete
+#
+# ============================================================================
