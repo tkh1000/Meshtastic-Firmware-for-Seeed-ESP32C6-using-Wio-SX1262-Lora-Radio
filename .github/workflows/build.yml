@@ -13,16 +13,15 @@ jobs:
       - name: Checkout this repo
         uses: actions/checkout@v4
 
-      - name: List files in this repo
+      - name: Debug - Show repo contents
         run: |
-          echo "Current directory:"
-          pwd
-          echo ""
-          echo "Files in current repo:"
+          echo "=== Repository root contents ==="
           ls -la
           echo ""
-          echo "Looking for patch_variant.py:"
-          find . -name "patch_variant.py" -o -name "*patch*"
+          echo "=== Verify required files ==="
+          test -f patch_variant.py && echo "✓ patch_variant.py found" || echo "✗ patch_variant.py MISSING"
+          test -f variant_seeed_xiao_esp32c6_wio_sx1262.h && echo "✓ variant.h found" || echo "✗ variant.h MISSING"
+          test -f platformio_seeed_xiao_esp32c6_wio_sx1262.ini && echo "✓ platformio.ini found" || echo "✗ platformio.ini MISSING"
 
       - name: Checkout Meshtastic firmware
         uses: actions/checkout@v4
@@ -32,11 +31,6 @@ jobs:
           submodules: recursive
           fetch-depth: 0
           path: firmware
-
-      - name: Verify Meshtastic checkout
-        run: |
-          echo "Meshtastic firmware location:"
-          ls -la firmware/ | head -20
 
       - name: Cache PlatformIO
         uses: actions/cache@v4
@@ -53,145 +47,73 @@ jobs:
       - name: Create variant directory
         run: |
           mkdir -p firmware/variants/esp32c6/seeed_xiao_wio_sx1262
-          echo "Created variant directory"
-          ls -la firmware/variants/esp32c6/seeed_xiao_wio_sx1262/
+          echo "✓ Variant directory created"
 
       - name: Copy variant.h
         run: |
-          echo "Copying variant.h..."
-          ls -la variant_seeed_xiao_esp32c6_wio_sx1262.h
           cp variant_seeed_xiao_esp32c6_wio_sx1262.h \
              firmware/variants/esp32c6/seeed_xiao_wio_sx1262/variant.h
           echo "✓ variant.h copied"
-          ls -la firmware/variants/esp32c6/seeed_xiao_wio_sx1262/
 
       - name: Copy platformio.ini
         run: |
-          echo "Copying platformio.ini..."
-          ls -la platformio_seeed_xiao_esp32c6_wio_sx1262.ini
           cp platformio_seeed_xiao_esp32c6_wio_sx1262.ini \
              firmware/variants/esp32c6/seeed_xiao_wio_sx1262/platformio.ini
           echo "✓ platformio.ini copied"
-          ls -la firmware/variants/esp32c6/seeed_xiao_wio_sx1262/
 
-      - name: List patch_variant.py location
+      - name: Run patch script
         run: |
-          echo "Looking for patch_variant.py in current directory:"
-          pwd
-          ls -la patch_variant.py || echo "NOT FOUND in current directory"
+          echo "Current directory: $(pwd)"
+          echo "Patcher script location:"
+          ls -la patch_variant.py
           echo ""
-          echo "All Python files:"
-          find . -maxdepth 1 -name "*.py"
-
-      - name: Run patch_variant script
-        run: |
-          REPO_ROOT=$(pwd)
-          VARIANT="firmware/variants/esp32c6/seeed_xiao_wio_sx1262/variant.h"
-          
-          echo "Repository root: $REPO_ROOT"
-          echo "Patching: $VARIANT"
-          echo ""
-          echo "Checking if patch_variant.py exists:"
-          if [ -f "patch_variant.py" ]; then
-            echo "✓ Found patch_variant.py"
-            python3 patch_variant.py "$VARIANT"
-          else
-            echo "✗ patch_variant.py NOT FOUND"
-            echo "Files in current directory:"
-            ls -la
-            exit 1
-          fi
-
-      - name: Verify variant.h was patched
-        run: |
-          echo "Checking patched variant.h:"
-          VARIANT="firmware/variants/esp32c6/seeed_xiao_wio_sx1262/variant.h"
-          
-          echo "Last 50 lines:"
-          tail -50 "$VARIANT"
-          
-          echo ""
-          echo "Checking for SPI pin definitions:"
-          grep -i "LORA_MOSI\|LORA_MISO\|LORA_SCK" "$VARIANT" || echo "Definitions not found"
+          echo "Running patcher..."
+          python3 patch_variant.py firmware/variants/esp32c6/seeed_xiao_wio_sx1262/variant.h
+          echo "✓ Patcher complete"
 
       - name: Build firmware
         working-directory: firmware
         run: |
-          echo "Starting PlatformIO build..."
-          echo ""
-          pio run -e seeed_xiao_wio_sx1262 --verbose 2>&1 | tail -50
+          echo "Building seeed_xiao_wio_sx1262..."
+          pio run -e seeed_xiao_wio_sx1262 2>&1 | tail -100
 
       - name: Check build output
         run: |
-          echo "Checking build directory:"
           BUILD_DIR="firmware/.pio/build/seeed_xiao_wio_sx1262"
-          
-          if [ -d "$BUILD_DIR" ]; then
-            echo "✓ Build directory exists"
-            ls -lh "$BUILD_DIR/"
-            echo ""
-            find "$BUILD_DIR" -name "*.bin" -o -name "*.elf"
-          else
-            echo "✗ Build directory not found!"
-            ls -la firmware/.pio/build/
-            exit 1
-          fi
+          echo "Build directory contents:"
+          ls -lh "$BUILD_DIR/" || exit 1
 
       - name: Copy binaries
-        if: success()
         run: |
           mkdir -p package
           BUILD="firmware/.pio/build/seeed_xiao_wio_sx1262"
           
-          echo "Copying binaries from: $BUILD"
-          
-          # Copy bootloader if exists
           if [ -f "$BUILD/bootloader.bin" ]; then
-            cp "$BUILD/bootloader.bin" package/bootloader.bin
-            echo "✓ bootloader.bin ($(stat -c%s package/bootloader.bin) bytes)"
-          else
-            echo "⚠ bootloader.bin not found"
+            cp "$BUILD/bootloader.bin" package/
           fi
           
-          # Copy partitions if exists
           if [ -f "$BUILD/partitions.bin" ]; then
-            cp "$BUILD/partitions.bin" package/partitions.bin
-            echo "✓ partitions.bin ($(stat -c%s package/partitions.bin) bytes)"
-          else
-            echo "⚠ partitions.bin not found"
+            cp "$BUILD/partitions.bin" package/
           fi
           
-          # Find and copy firmware.bin
           FW=$(find "$BUILD" -name "firmware.bin" | head -1)
-          if [ -z "$FW" ]; then
-            FW=$(find "$BUILD" -name "*.bin" ! -name "bootloader.bin" ! -name "partitions.bin" | head -1)
-          fi
-          
           if [ -n "$FW" ]; then
             cp "$FW" package/firmware.bin
-            SIZE=$(stat -c%s package/firmware.bin)
-            echo "✓ firmware.bin ($SIZE bytes)"
+            echo "✓ Copied: $(ls -lh package/firmware.bin)"
           else
-            echo "✗ No firmware.bin found!"
-            echo "All files in build dir:"
-            find "$BUILD" -type f
+            echo "✗ firmware.bin not found!"
             exit 1
           fi
-          
-          echo ""
-          echo "Package contents:"
-          ls -lh package/
 
-      - name: Write manifest
-        if: success()
+      - name: Create manifest
         run: |
           mkdir -p package
-          python3 > /dev/null << 'EOF'
+          python3 << 'PYSCRIPT'
           import json
           manifest = {
               "name": "Meshtastic",
               "version": "2.7.15",
-              "new_install_prompt_erase": true,
+              "new_install_prompt_erase": True,
               "builds": [{
                   "chipFamily": "ESP32-C6",
                   "parts": [
@@ -203,42 +125,23 @@ jobs:
           }
           with open('package/manifest.json', 'w') as f:
               json.dump(manifest, f, indent=2)
-          EOF
+          PYSCRIPT
           echo "✓ manifest.json created"
-          cat package/manifest.json
 
-      - name: Zip package
-        if: success()
+      - name: Create zip
         working-directory: package
         run: |
-          echo "Creating zip file..."
-          ls -la
-          zip -v ../meshtastic-seeed-xiao-c6-wio-sx1262.zip *.bin manifest.json
-          echo ""
-          echo "Zip file created:"
+          zip -v ../meshtastic-seeed-xiao-c6-wio-sx1262.zip *
           ls -lh ../meshtastic-seeed-xiao-c6-wio-sx1262.zip
 
       - name: Upload artifact
-        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: meshtastic-seeed-xiao-c6-wio-sx1262
           path: meshtastic-seeed-xiao-c6-wio-sx1262.zip
           retention-days: 30
 
-      - name: Build Summary
-        if: always()
+      - name: Success
         run: |
-          echo ""
-          echo "========================================"
-          echo "Build Complete"
-          echo "========================================"
-          echo ""
+          echo "✓ BUILD COMPLETE!"
           echo "Download: meshtastic-seeed-xiao-c6-wio-sx1262.zip"
-          echo ""
-          if [ -f "meshtastic-seeed-xiao-c6-wio-sx1262.zip" ]; then
-            echo "File size: $(stat -c%s meshtastic-seeed-xiao-c6-wio-sx1262.zip) bytes"
-            unzip -l meshtastic-seeed-xiao-c6-wio-sx1262.zip
-          else
-            echo "✗ Build artifact not found"
-          fi
