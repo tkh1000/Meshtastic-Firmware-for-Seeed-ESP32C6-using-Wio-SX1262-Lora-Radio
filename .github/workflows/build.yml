@@ -26,17 +26,17 @@ jobs:
         run: pip install platformio
 
       - name: Create variant directory
-        run: mkdir -p firmware/variants/esp32c6/seeed_xiao_wio_sx1262
+        run: mkdir -p firmware/variants/esp32c6/seed_xiao_esp32c6_wio_sx1262
 
       - name: Copy variant.h
-        run: cp variant_seeed_xiao_esp32c6_wio_sx1262.h firmware/variants/esp32c6/seeed_xiao_wio_sx1262/variant.h
+        run: cp variant_seeed_xiao_esp32c6_wio_sx1262.h firmware/variants/esp32c6/seed_xiao_esp32c6_wio_sx1262/variant.h
 
       - name: Copy platformio.ini
-        run: cp platformio_seeed_xiao_esp32c6_wio_sx1262.ini firmware/variants/esp32c6/seeed_xiao_wio_sx1262/platformio.ini
+        run: cp platformio_seeed_xiao_esp32c6_wio_sx1262.ini firmware/variants/esp32c6/seed_xiao_esp32c6_wio_sx1262/platformio.ini
 
       - name: Add SPI pins to variant.h
         run: |
-          cat >> firmware/variants/esp32c6/seeed_xiao_wio_sx1262/variant.h << 'EOF'
+          cat >> firmware/variants/esp32c6/seed_xiao_esp32c6_wio_sx1262/variant.h << 'EOF'
           
           // SPI pins for Wio-SX1262
           #define USE_SX1262
@@ -51,12 +51,12 @@ jobs:
 
       - name: Build
         working-directory: firmware
-        run: pio run -e seeed_xiao_wio_sx1262
+        run: pio run -e seed_xiao_esp32c6_wio_sx1262
 
       - name: Collect artifacts
         run: |
           mkdir -p output
-          BUILD="firmware/.pio/build/seeed_xiao_wio_sx1262"
+          BUILD="firmware/.pio/build/seed_xiao_esp32c6_wio_sx1262"
           cp "$BUILD/bootloader.bin" output/ 2>/dev/null || true
           cp "$BUILD/partitions.bin" output/ 2>/dev/null || true
           cp "$BUILD/firmware.bin" output/ || exit 1
